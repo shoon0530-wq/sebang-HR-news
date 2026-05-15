@@ -20,7 +20,6 @@ except ImportError:
     import requests
 
 def get_hr_news():
-    # [키워드 전면 개편] 세간의 이목이 집중되는 메이저/이슈 기사 키워드를 최상단 우선순위로 배치
     keywords = [
         "노란봉투법", 
         "삼성전자 노사", 
@@ -30,9 +29,11 @@ def get_hr_news():
         "인사노무 트렌드"
     ]
     news_list = []
-    company_counts = {}
     
-    print("📰 시사 및 핵심 노무 이슈 중심 뉴스 수집 시작...")
+    # [핵심 교정] 기업명뿐만 아니라 주요 대형 이슈 키워드까지 카운팅하는 통합 딕셔너리
+    issue_counts = {}
+    
+    print("📰 기업 및 시사 이슈별 중복 제거(최대 2개 제한) 필터링 시작...")
     
     if hasattr(ssl, '_create_unverified_context'):
         ssl._create_default_https_context = ssl._create_unverified_context
@@ -52,6 +53,7 @@ def get_hr_news():
                 link = entry.link
                 source = entry.source.title if hasattr(entry, 'source') else "언론사"
                 
+                # 1. 날짜 필터링 (최근 3일 이내)
                 is_recent = True
                 if hasattr(entry, 'published_parsed') and entry.published_parsed:
                     pub_dt = datetime.fromtimestamp(time.mktime(entry.published_parsed))
@@ -63,16 +65,25 @@ def get_hr_news():
                     
                 clean_title = title.split(" - ")[0].strip()
                 
-                # 동일 대기업/이슈 도배 방지 필터링 (최대 2개 유지로 다양성 확보)
-                company_key = clean_title[:4].replace(" ", "")
-                for word in ["삼성전자", "금호타이어", "KAI", "현대차", "기아", "노동부", "노란봉투법", "근로기준법"]:
-                    if word in clean_title:
-                        company_key = word
+                # 2. [강력한 필터링] 특정 단어가 제목에 포함되어 있다면 동일 이슈군으로 묶어 버립니다.
+                issue_key = clean_title[:4].replace(" ", "") # 기본 키값
+                
+                # 체크할 메이저 이슈 및 기업 리스트
+                macro_topics = [
+                    "노란봉투법", "노란봉투", "삼성전자", "삼성", "근로기준법", 
+                    "최저임금", "주52시간", "임단협", "파업", "노동부", "금호타이어", "KAI"
+                ]
+                
+                for topic in macro_topics:
+                    if topic in clean_title:
+                        issue_key = topic
                         break
                 
-                if company_counts.get(company_key, 0) >= 2:
+                # 해당 이슈나 기업이 이미 메일 리스트에 2개 이상 들어있다면 무조건 패스(탈락)
+                if issue_counts.get(issue_key, 0) >= 2:
                     continue
                 
+                # 중복 링크 검증 후 추가
                 if not any(n['url'] == link for n in news_list):
                     news_list.append({
                         "keyword": keyword,
@@ -80,31 +91,30 @@ def get_hr_news():
                         "url": link,
                         "source": source
                     })
-                    company_counts[company_key] = company_counts.get(company_key, 0) + 1
+                    # 카운트 누적
+                    issue_counts[issue_key] = issue_counts.get(issue_key, 0) + 1
                     
-                # 메이저 이슈들 위주로 컴팩트하게 노출하기 위해 최대 개수 조절
                 if len(news_list) >= 15:
                     break
         except Exception as e:
-            print(f"[{keyword}] 수집 중 에러 발생 무시: {e}")
+            print(f"[{keyword}] 뉴스 파싱 중 스킵: {e}")
             
-    print(f"📊 최종 엄선된 메이저 뉴스 개수: {len(news_list)}개")
+    print(f"📊 최종 필터링을 통과한 균형 잡힌 뉴스 개수: {len(news_list)}개")
     return news_list
 
 def generate_newsletter_with_gemini(news_list):
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        print("GEMINI_API_KEY가 존재하지 않습니다.")
         return None
         
     raw_news_text = ""
     for idx, news in enumerate(news_list, 1):
-        raw_news_text += f"[{idx}] 매체: {news['source']} | 핵심이슈: {news['keyword']}\n제목: {news['title']}\n링크: {news['url']}\n\n"
+        raw_news_text += f"[{idx}] 매체: {news['source']} | 토픽: {news['keyword']}\n제목: {news['title']}\n링크: {news['url']}\n\n"
     
     prompt = f"""
     당신은 대기업의 수석 인사노무 전문가이자 뉴스레터 편집자입니다.
-    아래 제공되는 {len(news_list)}개의 최신 메이저 이슈 뉴스 데이터를 바탕으로 경영진 및 인사담당자를 위한 데일리 리포트를 작성해 주세요.
-    특히 '노란봉투법', '삼성전자', '법안 개정' 등 세간의 굵직한 핵심 이슈 기사가 돋보이도록 요약해 주어야 합니다.
+    아래 제공되는 {len(news_list)}개의 최신 메이저 뉴스 데이터를 바탕으로 경영진 및 인사담당자를 위한 데일리 리포트를 작성해 주세요.
+    다양한 주제가 골고루 섞여 있으니, 각 주제의 맥락을 살려 깔끔하게 요약해야 합니다.
     
     [핵심 작성 규칙]
     1. 답변은 반드시 아래의 포맷 양식으로만 구성해야 하며, 마크다운 기호(#, **, ` 등)는 절대로 쓰지 마세요.
@@ -132,13 +142,12 @@ def generate_newsletter_with_gemini(news_list):
         else:
             return None
     except Exception as e:
-        print(f"AI 응답 생성 실패: {e}")
+        print(f"AI 호출 오류: {e}")
         return None
 
 def build_html_template(ai_content, raw_news):
     today_str = datetime.now().strftime('%Y년 %m월 %d일')
     
-    # [수정] 상단 여백 전면 제거 및 불필요한 문구 컴포넌트 삭제
     html_body = f"""
     <div style="background-color: #f8fafc; padding: 0px 10px 40px 10px; font-family: 'Malgun Gothic', sans-serif; color: #334155; line-height: 1.6; margin: 0;">
         <div style="max-width: 620px; margin: 0 auto; padding-top: 15px;">
@@ -228,7 +237,7 @@ def send_email(html_content):
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(gmail_user, gmail_pw)
             server.sendmail(gmail_user, receiver_email, msg.as_string())
-        print("🚀 시사 중심 뉴스레터 발송 완료!")
+        print("🚀 이슈별 중복제거가 완벽 조율된 뉴스레터 발송 완료!")
     except Exception as e:
         print(f"메일 발송 오류: {e}")
 
