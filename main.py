@@ -53,7 +53,7 @@ def get_hr_news():
     return news_list
 
 # ==========================================
-# 2. Gemini AI를 활용한 뉴스브리핑 생성 (404 에러 완전 해결)
+# 2. Gemini AI를 활용한 뉴스브리핑 생성 (호환성 최적화 패치)
 # ==========================================
 def generate_newsletter_with_gemini(news_list):
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -62,8 +62,8 @@ def generate_newsletter_with_gemini(news_list):
         
     genai.configure(api_key=api_key)
     
-    # [교정 완료] 구글 표준 모델명인 'gemini-1.5-flash-latest' 로 명확히 지정합니다.
-    model = genai.GenerativeModel("gemini-1.5-flash-latest")
+    # [호환성 패치] 구형/신형 환경 모두에서 가장 안정적으로 작동하는 레거시-최신 호환 모델 코드를 사용합니다.
+    model = genai.GenerativeModel(model_name="models/gemini-1.5-flash")
     
     raw_news_text = ""
     for idx, news in enumerate(news_list, 1):
@@ -76,11 +76,11 @@ def generate_newsletter_with_gemini(news_list):
     [수집된 뉴스 데이터]
     {raw_news_text}
 
-    [작성 가이드라인]
+    [작성 가이드라인 - 필수]
     1. 제목은 세련되고 전문적인 인사 브리핑 형태로 작성해 주세요 (예: "[세방 HR 브리핑] 오늘의 주요 인사·노무 동향")
     2. 뉴스들을 단순 나열하지 말고 중요도나 주제별로 2~3개의 그룹으로 묶어서 정리해 주세요.
     3. 각 뉴스 요약 끝에는 인사담당자가 주목해야 할 '실무적 시사점 또는 대응 팁'을 1~2줄씩 덧붙여 주세요.
-    4. 반드시 일반 텍스트 형태로 읽기 쉽게 출력해 주세요. 메일 시스템 호환을 위해 마크다운 특수기호(#, **)는 최소화하고 가독성 높은 줄바꿈과 이모지(예: 📌, 🚀)를 적극 활용해 주세요.
+    4. 중요: 메일 본문에서 글자가 깨지지 않도록 마크다운 기호(예: **, #, -)는 절대 사용하지 마세요. 대신 일반 줄바꿈과 이모지(📌, 🚀)만을 사용하여 읽기 편하게 서식을 구성해 주세요.
     """
     
     print("Gemini AI가 맞춤형 HR 뉴스레터를 요약 및 생성 중입니다...")
@@ -103,7 +103,7 @@ def send_email(content):
     msg['To'] = receiver_email
     msg['Subject'] = f"[세방 HR 뉴스레터] 오늘의 주요 인사·노무 동향"
     
-    # 수신 환경 안정성을 위해 plain 텍스트 포맷으로 안전하게 인코딩하여 탑재
+    # 순수 텍스트 포맷으로 호환성 극대화 발송
     msg.attach(MIMEText(content, 'plain', 'utf-8'))
     
     print("구글 SMTP 서버에 접속하여 메일을 발송합니다...")
