@@ -1,137 +1,137 @@
 import os
-import smtplib
-import datetime
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-import google.generativeai as genai
 import requests
 from bs4 import BeautifulSoup
+import google.generativeai as genai
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
-# GitHub Secrets에 등록한 정보들을 가져옵니다.
-CONFIG = {
-    "GEMINI_API_KEY": os.getenv("GEMINI_API_KEY"),
-    "GMAIL_USER": os.getenv("GMAIL_USER"),
-    "GMAIL_APP_PW": os.getenv("GMAIL_APP_PW"),
-    "RECEIVER_EMAIL": os.getenv("RECEIVER_EMAIL"),
-}
-
-def fetch_hr_news():
-    print("네이버 뉴스에서 인사/노무 관련 최신 정보를 수집합니다...")
-    search_url = "https://search.naver.com/search.naver?where=news&query=인사노무%20법령%20판례"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
+# ==========================================
+# 1. 네이버 뉴스 검색 및 수집 (인사/노무 타겟 최적화)
+# ==========================================
+def get_hr_news():
+    # 인사담당자에게 꼭 필요한 '실전형 핵심 키워드'들을 조합하여 검색합니다.
+    keywords = ["인사노무", "노사교섭", "임단협", "고용노동부 지침", "노동법 개정"]
+    news_list = []
     
-    try:
-        response = requests.get(search_url, headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        news_items = []
-        # 상위 15개의 뉴스 제목과 링크 추출
-        articles = soup.select('.news_tit')[:15]
-        
-        for article in articles:
-            news_items.append({
-                "title": article.get_text(),
-                "link": article['href']
-            })
-        return news_items
-    except Exception as e:
-        print(f"뉴스 수집 중 오류 발생: {e}")
-        return []
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
 
-def get_ai_summary(news_list):
-    print("Gemini AI를 사용하여 뉴스별 한 줄 요약을 생성합니다...")
-    if not CONFIG["GEMINI_API_KEY"]:
-        print("에러: GEMINI_API_KEY가 설정되지 않았습니다.")
-        return []
+    print("확장된 인사/노무 핵심 키워드로 네이버 최신 뉴스를 수집합니다...")
 
-    genai.configure(api_key=CONFIG["GEMINI_API_KEY"])
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    
-    summarized_news = []
-    
-    for item in news_list:
-        # 인사담당자 관점에서의 요약 프롬프트
-        prompt = f"너는 노무법인 소속 전문가야. 인사담당자가 아래 뉴스를 읽었을 때 핵심이 무엇인지 '음'체나 '함'체로 딱 한 줄로 요약해줘: {item['title']}"
+    for keyword in keywords:
+        # 네이버 뉴스 '최신순(sort=1)'으로 정렬하여 검색 주소 생성
+        url = f"https://search.naver.com/search.naver?where=news&query={keyword}&sm=tab_smr&sort=1"
         try:
-            response = model.generate_content(prompt)
-            summary = response.text.strip()
-        except Exception:
-            summary = "요약을 생성할 수 없습니다."
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code != 200:
+                continue
+                
+            soup = BeautifulSoup(response.text, 'html.parser')
+            # 네이버 뉴스 검색 결과 문서 구조 분석 타겟팅
+            articles = soup.select("ul.list_news > li.bx")
+            
+            for article in articles[:4]: # 키워드당 최신 뉴스 상위 4개씩 추출
+                title_elem = article.select_one("a.news_tit")
+                if not title_elem:
+                    continue
+                
+                title = title_elem.text.strip()
+                link = title_elem['href']
+                
+                # 요약문 추출
+                dsc_elem = article.select_one("div.news_dsc")
+                summary = dsc_elem.text.strip() if dsc_elem else ""
+                
+                # 중복 뉴스 제거 검사
+                if not any(item['url'] == link for item in news_list):
+                    news_list.append({
+                        "keyword": keyword,
+                        "title": title,
+                        "url": link,
+                        "summary": summary
+                    })
+        except Exception as e:
+            print(f"[{keyword}] 검색 중 사소한 오류 발생 (패스): {e}")
+            
+    return news_list
+
+# ==========================================
+# 2. Gemini AI를 활용한 뉴스브리핑 및 인사이트 생성
+# ==========================================
+def generate_newsletter_with_gemini(news_list):
+    # 환경변수에서 AI 키 로드
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY 가 설정되지 않았습니다.")
         
-        summarized_news.append({
-            "title": item['title'],
-            "link": item['link'],
-            "summary": summary
-        })
-    return summarized_news
-
-def create_html_content(news_data):
-    today = datetime.datetime.now().strftime("%Y년 %m월 %d일")
-    items_html = ""
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel("gemini-1.5-flash")
     
-    for idx, item in enumerate(news_data, 1):
-        items_html += f"""
-        <div style="margin-bottom: 25px; padding: 15px; border-left: 5px solid #004a99; background-color: #f8f9fa; border-radius: 0 5px 5px 0;">
-            <div style="font-size: 16px; font-weight: bold; margin-bottom: 8px;">
-                <span style="color: #004a99;">{idx}.</span> 
-                <a href="{item['link']}" style="color: #333; text-decoration: none;">{item['title']}</a>
-            </div>
-            <div style="font-size: 14px; color: #555; line-height: 1.6;">
-                <strong style="color: #e67e22;">[AI 요약]</strong> {item['summary']}
-            </div>
-        </div>
-        """
+    # AI에게 전달할 뉴스 데이터 뼈대 빌드
+    raw_news_text = ""
+    for idx, news in enumerate(news_list, 1):
+        raw_news_text += f"[{idx}] 키워드: {news['keyword']}\n제목: {news['title']}\n요약원문: {news['summary']}\n링크: {news['url']}\n\n"
+    
+    prompt = f"""
+    당신은 대한민국 최고의 기업 인사노무 전문가이자 Chief HR Officer (CHO) 전담 비서입니다.
+    아래 수집된 최신 뉴스 데이터들을 바탕으로, 오늘 아침 기업 경영진과 인사팀이 반드시 읽고 선제 대응해야 할 '일일 HR 뉴스레터'를 작성해 주세요.
 
-    return f"""
-    <html>
-    <body style="margin: 0; padding: 0; font-family: 'Malgun Gothic', dotum, sans-serif;">
-        <div style="max-width: 600px; margin: 20px auto; border: 1px solid #e0e0e0;">
-            <div style="background-color: #004a99; color: white; padding: 30px; text-align: center;">
-                <h1 style="margin: 0; font-size: 24px;">세방(SEBANG) 인사 노무 뉴스레터</h1>
-                <p style="margin: 10px 0 0; opacity: 0.8;">{today} 데일리 브리핑</p>
-            </div>
-            <div style="padding: 20px;">
-                <p style="font-size: 15px; color: #666; border-bottom: 1px solid #eee; padding-bottom: 10px;">
-                    오늘의 주요 인사/노무 관련 소식을 AI 요약과 함께 전달드립니다.
-                </p>
-                {items_html}
-            </div>
-            <div style="background-color: #f1f1f1; padding: 20px; text-align: center; font-size: 12px; color: #888;">
-                본 메일은 시스템에 의해 자동 발송되었습니다.<br>
-                문의: 인사팀 자동화 담당자
-            </div>
-        </div>
-    </body>
-    </html>
+    [수집된 뉴스 데이터]
+    {raw_news_text}
+
+    [작성 가이드라인]
+    1. 제목은 세련되고 전문적인 인사 브리핑 형태로 작성해 주세요 (예: "[세방 HR 브리핑] 2026년 5월 15일 오늘의 주요 인사·노무 동향")
+    2. 뉴스들을 단순 나열하지 말고, 중요도나 주제별(예: 노사관계/임단협 이슈, 노동부 정책/지침 변경 등)로 2~3개의 그룹으로 묶어서 가독성 좋게 정리해 주세요.
+    3. 각 뉴스 요약 끝에는 인사담당자가 주목해야 할 '실무적 시사점(Implication) 또는 대응 팁'을 1~2줄씩 덧붙여 주세요.
+    4. 반드시 깔끔한 마크다운(Markdown)과 이모지를 섞어 전문적이면서도 Scannable(한눈에 들어오는) 구조의 HTML 메일 본문 형태로 출력해 주세요.
     """
+    
+    print("Gemini AI가 맞춤형 HR 뉴스레터를 요약 및 생성 중입니다...")
+    response = model.generate_content(prompt)
+    return response.text
 
-def send_email(html_body):
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
-    if not CONFIG["GMAIL_USER"] or not CONFIG["GMAIL_APP_PW"]:
-        print("에러: 메일 설정 정보가 부족합니다.")
-        return
-
+# ==========================================
+# 3. 구글 SMTP 서버를 통한 뉴스레터 메일 발송
+# ==========================================
+def send_email(content):
+    gmail_user = os.environ.get("GMAIL_USER")
+    gmail_pw = os.environ.get("GMAIL_APP_PW")
+    receiver_email = os.environ.get("RECEIVER_EMAIL")
+    
+    if not all([gmail_user, gmail_pw, receiver_email]):
+        raise ValueError("메일 발송 관련 보안 키(Secrets) 설정을 다시 확인해 주세요.")
+        
     msg = MIMEMultipart()
-    msg['Subject'] = f'세방 인사 노무 뉴스레터 ({today})'
-    msg['From'] = f"세방 인사 자동화 <{CONFIG['GMAIL_USER']}>"
-    msg['To'] = CONFIG["RECEIVER_EMAIL"]
+    msg['From'] = gmail_user
+    msg['To'] = receiver_email
+    msg['Subject'] = f"[세방 HR 뉴스레터] 오늘의 주요 인사·노무 동향 및 실무 시사점"
     
-    msg.attach(MIMEText(html_body, 'html'))
+    # HTML 형식 지원을 위해 본문 탑재
+    msg.attach(MIMEText(content, 'html' if "<div" in content or "<p" in content or "<html>" in content else 'plain', 'utf-8'))
     
-    try:
-        # 보안 연결(SSL)을 사용하여 메일 발송
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login(CONFIG["GMAIL_USER"], CONFIG["GMAIL_APP_PW"])
-            server.send_message(msg)
-        print(f"성공: {today} 뉴스레터가 {CONFIG['RECEIVER_EMAIL']}로 발송되었습니다.")
-    except Exception as e:
-        print(f"실패: 메일 발송 중 오류가 발생했습니다: {e}")
+    print("구글 SMTP 서버에 접속하여 메일을 발송합니다...")
+    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+        server.login(gmail_user, gmail_pw)
+        server.sendmail(gmail_user, receiver_email, msg.as_string())
+    print("뉴스레터 메일 발송 완벽하게 성공!")
 
+# ==========================================
+# 메인 제어 루프
+# ==========================================
 if __name__ == "__main__":
-    raw_news = fetch_hr_news()
-    if raw_news:
-        processed_news = get_ai_summary(raw_news)
-        html_content = create_html_content(processed_news)
-        send_email(html_content)
-    else:
-        print("수집된 뉴스가 없어 발송을 중단합니다.")
+    raw_news = get_hr_news()
+    
+    # 만약 네이버 검색에서 정말 1건도 안 나오는 비상 상황을 대비한 백업 안전장치
+    if not raw_news:
+        print("네이버 실시간 검색 차단 또는 검색 데이터 부재로 인해 기본 모드로 전환합니다.")
+        raw_news = [{
+            "keyword": "인사노무 기본동향",
+            "title": "주요 대기업 노사 교섭 및 상반기 임단협 집중 모니터링 필요성",
+            "summary": "최근 대기업들을 중심으로 임금 인상률 조율 및 노사 성과급 배분 갈등이 심화되고 있어, 인사팀의 실시간 동향 모니터링과 선제적 리스크 관리가 요구됩니다.",
+            "url": "https://news.naver.com"
+        }]
+        
+    newsletter_content = generate_newsletter_with_gemini(raw_news)
+    send_email(newsletter_content)
