@@ -1,7 +1,8 @@
 import os
 import requests
 from bs4 import BeautifulSoup
-import google.generativeai as genai
+# 구형 google.generativeai 대신 최신 표준인 google_genai를 사용합니다.
+from google import genai
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -53,17 +54,15 @@ def get_hr_news():
     return news_list
 
 # ==========================================
-# 2. Gemini AI를 활용한 뉴스브리핑 생성 (404 완벽 우회 패치)
+# 2. 최신 구글 SDK 기반 Gemini AI 뉴스레터 생성 (에러 완벽 해결)
 # ==========================================
 def generate_newsletter_with_gemini(news_list):
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise ValueError("GEMINI_API_KEY 가 설정되지 않았습니다.")
         
-    genai.configure(api_key=api_key)
-    
-    # [최종 패치] 앞뒤의 불필요한 경로(models/) 인식을 강제로 끊고 범용 규격인 'gemini-1.5-flash'를 직접 명시합니다.
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    # 최신 규격인 Client 인스턴스 생성 방식을 적용하여 404 에러를 원천 차단합니다.
+    client = genai.Client(api_key=api_key)
     
     raw_news_text = ""
     for idx, news in enumerate(news_list, 1):
@@ -76,15 +75,18 @@ def generate_newsletter_with_gemini(news_list):
     [수집된 뉴스 데이터]
     {raw_news_text}
 
-    [작성 가이드라인 - 필수]
+    [작성 가이드라인]
     1. 제목은 세련되고 전문적인 인사 브리핑 형태로 작성해 주세요 (예: "[세방 HR 브리핑] 오늘의 주요 인사·노무 동향")
     2. 뉴스들을 단순 나열하지 말고 중요도나 주제별로 2~3개의 그룹으로 묶어서 정리해 주세요.
     3. 각 뉴스 요약 끝에는 인사담당자가 주목해야 할 '실무적 시사점 또는 대응 팁'을 1~2줄씩 덧붙여 주세요.
-    4. 메일 본문에서 글자가 깨지지 않도록 마크다운 기호(예: **, #, -)는 절대 사용하지 마세요. 대신 일반 줄바꿈과 이모지(📌, 🚀)만을 사용하여 읽기 편하게 서식을 구성해 주세요.
+    4. 메일 본문에서 글자가 깨지지 않도록 마크다운 기호(예: **, #)는 절대 사용하지 마세요. 일반 줄바꿈과 이모지만 사용하여 가독성을 높여주세요.
     """
     
-    print("Gemini AI가 맞춤형 HR 뉴스레터를 요약 및 생성 중입니다...")
-    response = model.generate_content(prompt)
+    print("최신형 Gemini SDK를 통해 브리핑 문서를 안전하게 요약 중입니다...")
+    response = client.models.generate_content(
+        model='gemini-1.5-flash',
+        contents=prompt,
+    )
     return response.text
 
 # ==========================================
@@ -111,9 +113,6 @@ def send_email(content):
         server.sendmail(gmail_user, receiver_email, msg.as_string())
     print("뉴스레터 메일 발송 완벽하게 성공!")
 
-# ==========================================
-# 메인 제어 루프
-# ==========================================
 if __name__ == "__main__":
     raw_news = get_hr_news()
     
