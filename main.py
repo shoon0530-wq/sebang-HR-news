@@ -1,8 +1,8 @@
 import os
 import requests
 from bs4 import BeautifulSoup
-# 구형 google.generativeai 대신 최신 표준인 google_genai를 사용합니다.
 from google import genai
+from google.genai import types  # 명시적 설정용 모듈 추가
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -54,15 +54,18 @@ def get_hr_news():
     return news_list
 
 # ==========================================
-# 2. 최신 구글 SDK 기반 Gemini AI 뉴스레터 생성 (에러 완벽 해결)
+# 2. Gemini AI 뉴스레터 생성 (API 통로 고정 패치)
 # ==========================================
 def generate_newsletter_with_gemini(news_list):
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise ValueError("GEMINI_API_KEY 가 설정되지 않았습니다.")
         
-    # 최신 규격인 Client 인스턴스 생성 방식을 적용하여 404 에러를 원천 차단합니다.
-    client = genai.Client(api_key=api_key)
+    # [핵심 교정] v1beta 에러를 완벽히 차단하기 위해 정식 서비스 버전(v1) 통로를 강제로 지정합니다.
+    client = genai.Client(
+        api_key=api_key,
+        http_options={'api_version': 'v1'}
+    )
     
     raw_news_text = ""
     for idx, news in enumerate(news_list, 1):
@@ -82,7 +85,7 @@ def generate_newsletter_with_gemini(news_list):
     4. 메일 본문에서 글자가 깨지지 않도록 마크다운 기호(예: **, #)는 절대 사용하지 마세요. 일반 줄바꿈과 이모지만 사용하여 가독성을 높여주세요.
     """
     
-    print("최신형 Gemini SDK를 통해 브리핑 문서를 안전하게 요약 중입니다...")
+    print("교정된 정식 API 통로를 통해 Gemini 뉴스레터를 안전하게 생성 중입니다...")
     response = client.models.generate_content(
         model='gemini-1.5-flash',
         contents=prompt,
