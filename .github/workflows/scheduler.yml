@@ -1,6 +1,11 @@
 name: 일일 HR 뉴스레터 자동화
 
 on:
+  # 평일(월~금) 한국 시간 아침 8시 정각 자동 실행 (UTC 기준 전날 23시)
+  schedule:
+    - cron: '0 23 * * 1-5'
+  
+  # 필요할 때 언제든 수동으로 실행할 수 있는 버튼도 유지합니다.
   workflow_dispatch:
 
 jobs:
@@ -16,7 +21,8 @@ jobs:
           python-version: '3.10'
 
       - name: 필수 라이브러리 설치
-        run: pip install requests beautifulsoup4 feedparser
+        run: |
+          pip install requests beautifulsoup4 feedparser
 
       - name: 뉴스레터 스크립트 실행
         env:
