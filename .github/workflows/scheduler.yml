@@ -16,7 +16,7 @@ jobs:
           python-version: '3.10'
 
       - name: 필수 라이브러리 설치
-        run: pip install requests beautifulsoup4
+        run: pip install requests beautifulsoup4 feedparser
 
       - name: 뉴스레터 스크립트 실행
         env:
