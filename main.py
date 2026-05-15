@@ -1,8 +1,6 @@
 import os
 import requests
 from bs4 import BeautifulSoup
-from google import genai
-from google.genai import types  # 명시적 설정용 모듈 추가
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -54,19 +52,13 @@ def get_hr_news():
     return news_list
 
 # ==========================================
-# 2. Gemini AI 뉴스레터 생성 (API 통로 고정 패치)
+# 2. 라이브러리 버그를 우회하는 API 직접 호출 방식 (REST API)
 # ==========================================
 def generate_newsletter_with_gemini(news_list):
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise ValueError("GEMINI_API_KEY 가 설정되지 않았습니다.")
         
-    # [핵심 교정] v1beta 에러를 완벽히 차단하기 위해 정식 서비스 버전(v1) 통로를 강제로 지정합니다.
-    client = genai.Client(
-        api_key=api_key,
-        http_options={'api_version': 'v1'}
-    )
-    
     raw_news_text = ""
     for idx, news in enumerate(news_list, 1):
         raw_news_text += f"[{idx}] 키워드: {news['keyword']}\n제목: {news['title']}\n요약원문: {news['summary']}\n링크: {news['url']}\n\n"
@@ -85,12 +77,30 @@ def generate_newsletter_with_gemini(news_list):
     4. 메일 본문에서 글자가 깨지지 않도록 마크다운 기호(예: **, #)는 절대 사용하지 마세요. 일반 줄바꿈과 이모지만 사용하여 가독성을 높여주세요.
     """
     
-    print("교정된 정식 API 통로를 통해 Gemini 뉴스레터를 안전하게 생성 중입니다...")
-    response = client.models.generate_content(
-        model='gemini-1.5-flash',
-        contents=prompt,
-    )
-    return response.text
+    # 구글 라이브러리를 쓰지 않고, 가장 확실하고 주소가 고정된 구글 공식 REST API 포트를 직접 때립니다.
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={api_key}"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt}
+                ]
+            }
+        ]
+    }
+    
+    print("라이브러리 우회형 포트를 통해 Gemini 뉴스레터를 직접 안전하게 생성 중입니다...")
+    response = requests.post(url, headers=headers, json=payload, timeout=30)
+    
+    if response.status_code == 200:
+        result_json = response.json()
+        try:
+            return result_json['candidates'][0]['content']['parts'][0]['text']
+        except (KeyError, IndexErrors) as e:
+            raise RuntimeError(f"구글 응답 파싱 실패: {result_json}")
+    else:
+        raise RuntimeError(f"구글 AI 서버 호출 실패 (에러코드 {response.status_code}): {response.text}")
 
 # ==========================================
 # 3. 구글 SMTP 서버를 통한 뉴스레터 메일 발송
