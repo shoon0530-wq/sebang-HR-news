@@ -21,87 +21,111 @@ except ImportError:
     import requests
 
 def get_hr_news():
-    # 🔍 [그물망 전면 교체] 고용노동부 도배를 막기 위해 핵심 시사 용어 중심으로 검색식을 정밀 튜닝합니다.
-    broad_query = '(인사관리 OR 노무 OR 근로기준법 OR 유연근무 OR "채용 트렌드" OR "조직문화" OR "인사노무" OR "노동법 판례") -공고 -모집'
+    # 🔍 인사, 노무, 정책, 판례, 조직문화를 두루 아우르는 통합 검색식
+    broad_query = '(인사관리 OR 노무 OR 근로기준법 OR 유연근무 OR "채용 트렌드" OR "조직문화" OR "인사노무" OR "노동법 판례" OR "임단협 파업" OR "고용노동부 정책")'
     
     encoded_keyword = urllib.parse.quote(broad_query)
     url = f"https://news.google.com/rss/search?q={encoded_keyword}&hl=ko&gl=KR&ceid=KR:ko"
     
-    news_list = []
-    
-    # 🚫 [동적 단어 도배 방지 엔진]
-    # 기사 제목에 등장하는 주요 단어들을 실시간으로 추적하여, 특정 단어(예: 고용노동부, 파업 등)가 
-    # 뉴스레터 전체에서 2번을 초과하여 도배되지 않도록 실시간으로 문을 걸어 잠급니다.
-    word_tracker = {}
+    temp_pool = []
+    word_frequency = {}
     
     if hasattr(ssl, '_create_unverified_context'):
         ssl._create_default_https_context = ssl._create_unverified_context
         
     now = datetime.now()
-    # 신선도를 유지하면서도 주말 공백을 채울 수 있도록 5일치 데이터를 스캔합니다.
+    # 3. 주말 대비 및 뉴스 고갈 방지를 위해 최대 7일간의 타임라인을 스캔합니다.
     time_limit = now - timedelta(days=7)
     
-    print("📰 [자율형 트렌드 스캔] 단어 도배 검사 및 동적 카테고리 생성 시작...")
+    print("📰 [6대 규칙 기반 HR 엔진] 실시간 기사 수집 및 형태소 분석 중...")
     
     try:
         feed = feedparser.parse(url)
         for entry in feed.entries:
-            if len(news_list) >= 12: # 경영진 보고용으로 가장 적절한 12개 안팎의 기사로 제한
-                break
-                
             title = entry.title
             link = entry.link
             source = entry.source.title if hasattr(entry, 'source') else "언론사"
             
-            # 날짜 필터링
-            is_recent = True
+            # 날짜 필터링 (최신순 정렬을 위해 튜플로 시간 기록)
+            pub_time = now
             if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                pub_dt = datetime.fromtimestamp(time.mktime(entry.published_parsed))
-                if pub_dt < time_limit:
-                    is_recent = False
+                pub_time = datetime.fromtimestamp(time.mktime(entry.published_parsed))
+                if pub_time < time_limit:
+                    continue
             
-            if not is_recent or not link:
-                continue
-                
             clean_title = title.split(" - ")[0].strip()
             if " < " in clean_title:
                 clean_title = clean_title.split(" < ")[0].strip()
             
-            # 🛑 [핵심 알고리즘] 제목에서 2글자 이상의 주요 키워드들을 추출합니다.
+            # 6. 광고 및 부적절 내용 필터링 (동음이의어 및 불필요 도메인 원천 차단)
+            noise_words = ["노무현재단", "재단", "연예", "스포츠", "아이돌", "드라마", "영화", "모집", "공고", "과태료"]
+            if any(nw in clean_title for nw in noise_words):
+                continue
+                
+            # 단어 빈도수 분석을 위한 키워드 추출 (2글자 이상)
             words = re.findall(r'[가-힣a-zA-Z0-9]{2,}', clean_title)
-            
-            # 특정 기관명이나 속보성 이슈 단어가 이미 뉴스레터에 2번 이상 등장했는지 검사합니다.
-            is_flooded = False
             for w in words:
-                # 의미 없는 단순 조사나 범용 단어 제외
-                if w in ["뉴스", "기자", "오늘", "내일", "포함", "대해", "올해", "경우"]:
+                if w in ["뉴스", "기자", "오늘", "내일", "인사", "노무", "대해", "올해"]:
                     continue
-                if word_tracker.get(w, 0) >= 2:
-                    is_flooded = True
-                    break
+                word_frequency[w] = word_frequency.get(w, 0) + 1
+                
+            temp_pool.append({
+                "title": clean_title,
+                "url": link,
+                "source": source,
+                "time": pub_time,
+                "words": words
+            })
             
-            if is_flooded:
-                continue # 특정 단어 도배 기사이므로 과감히 스킵하고 다음 주제 기사를 찾습니다.
-                
-            # 중복 기사 체크 및 수집 확정
-            if not any(n['url'] == link for n in news_list):
-                news_list.append({
-                    "title": clean_title,
-                    "url": link,
-                    "source": source
-                })
-                
-                # 수집된 기사의 단어들을 트래커에 누적 카운트 (도배 방지 작동)
-                for w in words:
-                    word_tracker[w] = word_tracker.get(w, 0) + 1
-                        
-                print(f"   ✅ [균등 수집] {source} | {clean_title[:28]}...")
-                
     except Exception as e:
         print(f"뉴스 수집 중 오류 발생: {e}")
-        
-    print(f"📊 특정 단어 편중 없이 최종 조율된 실시간 뉴스 총합: {len(news_list)}개")
-    return news_list
+        return []
+
+    # 4. [가장 많이 나오는 뉴스 상위 노출] 
+    # 수집된 가용 풀 안에서 단어 빈도수 합산 점수가 높은 기사(핫이슈) 순서로 1차 정렬합니다.
+    def calculate_score(article):
+        # 많이 언급된 단어가 제목에 포함될수록 높은 점수를 부여하되, 최신 기사일수록 추가 가중치 부여
+        score = sum(word_frequency.get(w, 0) for w in article["words"])
+        # 최신성 가중치 (시간당 점수 소폭 차등)
+        hours_ago = (now - article["time"]).total_seconds() / 3600
+        return score - (hours_ago * 0.1)
+
+    temp_pool.sort(key=calculate_score, reverse=True)
+    
+    # 1, 2. [중복 내용 및 중복 이슈 최대 2개 동적 제한 필터]
+    final_news_list = []
+    global_word_counter = {}
+    
+    for article in temp_pool:
+        if len(final_news_list) >= 12: # 보고서 최적 분량 유지
+            break
+            
+        # 기사 제목 내 단어들이 이미 최종 리스트에 2번 이상 등장했는지 조율
+        is_flooded = False
+        for w in article["words"]:
+            if w in ["삼성전자", "파업", "노조", "중노위", "협상", "근로기준법", "임금", "정부"]:
+                if global_word_counter.get(w, 0) >= 2:
+                    is_flooded = True
+                    break
+                    
+        if is_flooded:
+            continue # 이슈 독점 및 중복 방지를 위해 스킵
+            
+        # 중복 URL 검사 후 최종 확정
+        if not any(n['url'] == article['url'] for n in final_news_list):
+            final_news_list.append({
+                "title": article["title"],
+                "url": article["url"],
+                "source": article["source"]
+            })
+            # 사용된 단어 카운트 증가
+            for w in article["words"]:
+                global_word_counter[w] = global_word_counter.get(w, 0) + 1
+                
+            print(f"   🔥 [점수 기반 선별 및 노이즈 제거 완료] {article['source']} | {article['title'][:26]}...")
+
+    print(f"📊 최종 조율 완료 뉴스 총합: {len(final_news_list)}개")
+    return final_news_list
 
 def generate_newsletter_with_gemini(news_list):
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -114,8 +138,8 @@ def generate_newsletter_with_gemini(news_list):
     
     prompt = f"""
     당신은 대기업의 수석 인사노무 전문가이자 뉴스레터 편집자입니다.
-    아래 제공되는 실시간 뉴스 데이터를 바탕으로 경영진을 위한 종합 데일리 리포트를 작성해 주세요.
-    특정 속보에 편중되지 않고 인사 제도, 노동법, 채용 트렌드 등이 다양하게 구성되어 있으니 이 트렌드를 명확히 살려주세요.
+    아래 제공되는 실시간 뉴스 데이터는 현재 가장 핫한 HR 시사 트렌드 순서대로 정렬되어 있습니다.
+    경영진을 위한 종합 데일리 리포트를 양식에 맞춰 완벽하게 작성해 주세요.
     
     [핵심 작성 규칙]
     1. 답변은 반드시 아래의 포맷 양식으로만 구성해야 하며, 마크다운 기호(#, **, ` 등)는 절대로 쓰지 마세요.
@@ -177,7 +201,7 @@ def build_html_template(ai_content, raw_news):
                     if not link_line.startswith("http"):
                         continue
                         
-                    source_name = "실시간 트렌드"
+                    source_name = "실시간 주요현안"
                     title_name = header_line
                     if "|" in header_line:
                         source_name, title_name = header_line.split("|", 1)
@@ -192,10 +216,17 @@ def build_html_template(ai_content, raw_news):
                         continue
                         
                     valid_count += 1
+                    
+                    # 1등~2등(가장 핫한 뉴스) 카드는 테두리에 하이라이트 블루를 주어 가독성을 높입니다.
+                    border_color = "#3b82f6" if valid_count <= 2 else "#e2e8f0"
+                    badge_bg = "#dbeafe" if valid_count <= 2 else "#eff6ff"
+                    badge_text = "#1e40af" if valid_count <= 2 else "#2563eb"
+                    badge_label = "🔥 TOP ISSUE" if valid_count <= 2 else "동향 리포트"
+                    
                     html_body += f"""
-                    <div style="background-color: #ffffff; border: 1px solid #e2e8f0; border-top: 4px solid #2563eb; padding: 22px; margin-bottom: 20px; border-radius: 8px;">
+                    <div style="background-color: #ffffff; border: 1px solid {border_color}; border-top: 4px solid #2563eb; padding: 22px; margin-bottom: 20px; border-radius: 8px;">
                         <div style="margin-bottom: 10px;">
-                            <span style="background-color: #eff6ff; color: #2563eb; font-size: 11px; font-weight: bold; padding: 4px 10px; border-radius: 6px;">{source_name.strip()}</span>
+                            <span style="background-color: {badge_bg}; color: {badge_text}; font-size: 11px; font-weight: bold; padding: 4px 10px; border-radius: 6px;">{badge_label} | {source_name.strip()}</span>
                         </div>
                         <h3 style="margin: 0 0 12px 0; font-size: 16px; color: #1e293b; font-weight: bold;">{title_name.strip()}</h3>
                         <ul style="margin: 0 0 18px 0; padding-left: 20px; font-size: 14px; color: #475569;">
